@@ -19,12 +19,17 @@ from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
 
+# ⚙️ تنظیمات لاگ‌گیری امنیتی
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - SECURITY_LOG - %(message)s')
+
+# 🛡️ دیتابیس ساده برای بن کردن آی‌پی‌های مهاجم
 BLACKLISTED_IPS = {}
-BAN_TIME = 3600 
+BAN_TIME = 86400 # ۲۴ ساعت
 
-limiter = Limiter(get_remote_address, app=app, default_limits=["60 per minute", "1000 per day"], storage_uri="memory://")
+# 🛡️ لایه ۱: سیستم ضد DDoS (Rate Limit کلی)
+limiter = Limiter(get_remote_address, app=app, default_limits=["50 per minute", "1000 per day"], storage_uri="memory://")
 
+# 🛡️ لایه ۲: هدرهای امنیتی فوق‌پیشرفته
 @app.after_request
 def add_security_headers(response):
     response.headers['X-Frame-Options'] = 'DENY'
@@ -34,32 +39,37 @@ def add_security_headers(response):
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = "camera=(), microphone=(), geolocation=(), payment=()"
-    response.headers['Server'] = 'Secure-Web-Gateway-2.0'
+    response.headers['Server'] = 'Secure-Cyber-Gateway-3.0'
     return response
 
+# 🛡️ لایه ۳: فایروال چندلایه (WAF + Honeypot + IP Ban)
 @app.before_request
-def advanced_waf():
+def ultimate_waf():
     client_ip = get_remote_address()
     now = time.time()
 
+    # بررسی لیست سیاه
     if client_ip in BLACKLISTED_IPS:
         if now < BLACKLISTED_IPS[client_ip]:
             abort(403) 
         else:
             del BLACKLISTED_IPS[client_ip]
 
-    bad_paths = ['/wp-admin', '/.env', '/config', '/phpmyadmin', '/.git', '/etc/passwd', '/../../']
+    # هانی‌پات: مسدودسازی مسیرهای خطرناک
+    bad_paths = ['/wp-admin', '/.env', '/config', '/phpmyadmin', '/.git', '/etc/passwd', '/../../', '/admin.php']
     if any(path in request.path.lower() for path in bad_paths):
-        logging.warning(f"Attack Blocked: Bad Path from {client_ip}")
+        logging.warning(f"HONEYPOT TRIGGERED: Bad Path from {client_ip}")
+        BLACKLISTED_IPS[client_ip] = now + BAN_TIME
         abort(403)
 
+    # بررسی محتوای درخواست (Packet Tampering & Payload)
     try:
         payload = request.get_data(as_text=True).lower()
         attack_patterns = [
             r"union\s+select", r"or\s+1\s*=\s*1", r"drop\s+table", r"information_schema",
             r"<script", r"javascript:", r"onerror=", r"onload=", r"alert\(",
             r";\s*cat\s+", r"\|\s*bash", r"&\s*whoami", r"\.\./", r"/etc/passwd",
-            r"sleep\(", r"benchmark\(", r"pg_sleep", r"waitfor\s+delay"
+            r"sleep\(", r"benchmark\(", r"pg_sleep", r"waitfor\s+delay", r"eval\(", r"base64_decode"
         ]
         for pattern in attack_patterns:
             if re.search(pattern, payload):
@@ -69,6 +79,7 @@ def advanced_waf():
     except Exception:
         pass
 
+# 🛡️ لایه ۴: جلوگیری از SSRF (تست شبکه داخلی)
 def is_internal_ip(hostname):
     try:
         ip_str = socket.gethostbyname(hostname)
@@ -79,6 +90,7 @@ def is_internal_ip(hostname):
     except Exception:
         return True
 
+# 🛡️ لایه ۵: اعتبارسنجی عمیق
 def validate_input(data, key, max_len=500):
     if not isinstance(data, dict) or key not in data: return None
     val = data[key]
@@ -192,6 +204,11 @@ HTML_TEMPLATE = """
                 <div class="work-item"><h5>۳. کشف باگ Zero-Day در هسته لینوکس</h5><p>پیدا کردن آسیب‌پذیری روز صفر (RCE) و اخذ دسترسی کامل Root.</p></div>
                 <div class="work-item"><h5>۴. کرک هش‌های NTLM با خوشه GPU</h5><p>بازگردانی ۲ میلیون پسورد پیچیده با Rainbow Table.</p></div>
                 <div class="work-item"><h5>۵. نفوذ به سیستم‌های SCADA (کنترل صنعتی)</h5><p>دسترسی به پنل‌های PLC نیروگاه‌ها و زیرساخت‌های حساس.</p></div>
+                <div class="work-item"><h5>۶. بایپس سیستم احراز هویت بانکی (2FA)</h5><p>دور زدن لایه‌های امنیتی و نفوذ به حساب‌های سطح بالا.</p></div>
+                <div class="work-item"><h5>۷. رهگیری و شناسایی هکرهای کلاه‌سفید</h5><p>شناسایی ردپای ۵۰ مهاجم و ارسال گزارش به CERT.</p></div>
+                <div class="work-item"><h5>۸. نفوذ به شبکه‌های مخابراتی</h5><p>شنود و تحلیل ترافیک شبکه‌های 4G/5G در محیط ایزوله.</p></div>
+                <div class="work-item"><h5>۹. اکسپلویت مرورگر (Browser RCE)</h5><p>ساخت اکسپلویت برای V8 Engine و اجرای کد از راه دور.</p></div>
+                <div class="work-item"><h5>۱۰. هک فیزیکی و RFID Cloning</h5><p>کپی کردن کارت‌های RFID برای ورود به مناطق ممنوعه.</p></div>
             </div>
         </div>
 
