@@ -10,7 +10,10 @@ import string
 import json
 import ssl
 import time
-from flask import Flask, render_template_string, request, jsonify
+import datetime
+import qrcode
+from io import BytesIO
+from flask import Flask, render_template_string, request, jsonify, send_file
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
@@ -59,7 +62,7 @@ HTML_TEMPLATE = """
         .work-item h5 { color: #fff; margin-bottom: 5px; font-size: 1.1rem; }
         .work-item p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
 
-        .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+        .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
         .tool-box { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,0,60,0.2); border-radius: 8px; padding: 15px; transition: 0.3s; }
         .tool-box:hover { border-color: var(--neon-cyan); box-shadow: 0 0 15px rgba(0, 243, 255, 0.2); }
         .tool-box h4 { color: var(--neon-red); margin-bottom: 15px; font-family: 'Share Tech Mono', monospace; font-size: 0.95rem;}
@@ -69,7 +72,6 @@ HTML_TEMPLATE = """
         .input-group button:hover { background: #fff; color: #000; box-shadow: 0 0 15px var(--neon-red); }
         .result-box { background: #000; padding: 10px; border-radius: 5px; font-family: inherit; color: var(--neon-cyan); min-height: 40px; font-size: 0.85rem; display: none; white-space: pre-wrap; direction: ltr; text-align: left; border-left: 2px solid var(--neon-red); }
         
-        /* چت هوش مصنوعی */
         .ai-container { background: rgba(0, 0, 0, 0.8); border: 1px solid rgba(0, 243, 255, 0.3); border-radius: 15px; overflow: hidden; box-shadow: 0 0 30px rgba(0, 243, 255, 0.15); display: flex; flex-direction: column; height: 400px; }
         .ai-header { background: linear-gradient(90deg, rgba(0, 243, 255, 0.1), rgba(176, 38, 255, 0.1)); padding: 15px 20px; border-bottom: 1px solid rgba(0, 243, 255, 0.2); display: flex; align-items: center; gap: 15px; }
         .ai-avatar { width: 40px; height: 40px; background: radial-gradient(circle, var(--neon-cyan), var(--neon-purple)); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-cyan); animation: pulse 2s infinite; }
@@ -133,9 +135,9 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="glass-card">
-            <h3 class="section-title"><span>🧰 ۲۰ ابزار کاربردی و زنده</span></h3>
+            <h3 class="section-title"><span>🧰 ۳۰ ابزار کاربردی و زنده</span></h3>
             <div class="tools-grid">
-                <div class="tool-box"><h4>> اسکنر پورت</h4><div class="input-group"><input type="text" id="scan-ip" placeholder="IP/Domain" value="scanme.nmap.org"><button onclick="runTool('scan')">اسکن</button></div><div class="result-box" id="res-scan"></div></div>
+                <div class="tool-box"><h4>> اسکنر پورت</h4><div class="input-group"><input type="text" id="scan-ip" placeholder="IP" value="scanme.nmap.org"><button onclick="runTool('scan')">اسکن</button></div><div class="result-box" id="res-scan"></div></div>
                 <div class="tool-box"><h4>> اطلاعات آی‌پی</h4><div class="input-group"><input type="text" id="ip-info" placeholder="IP" value="8.8.8.8"><button onclick="runTool('ipinfo')">بگیر</button></div><div class="result-box" id="res-ipinfo"></div></div>
                 <div class="tool-box"><h4>> ساخت هش</h4><div class="input-group"><input type="text" id="hash-text" placeholder="متن" value="Hamed123"><button onclick="runTool('hash')">هش کن</button></div><div class="result-box" id="res-hash"></div></div>
                 <div class="tool-box"><h4>> اسکن زیردامنه</h4><div class="input-group"><input type="text" id="sub-domain" placeholder="Domain" value="google.com"><button onclick="runTool('subdomain')">اسکن</button></div><div class="result-box" id="res-subdomain"></div></div>
@@ -155,6 +157,16 @@ HTML_TEMPLATE = """
                 <div class="tool-box"><h4>> لینک‌های صفحه (Crawler)</h4><div class="input-group"><input type="text" id="crawl-url" placeholder="URL" value="https://example.com"><button onclick="runTool('crawl')">استخراج لینک</button></div><div class="result-box" id="res-crawl"></div></div>
                 <div class="tool-box"><h4>> تشخیص HTTP Method</h4><div class="input-group"><input type="text" id="method-url" placeholder="URL" value="https://google.com"><button onclick="runTool('httpmethod')">تشخیص</button></div><div class="result-box" id="res-httpmethod"></div></div>
                 <div class="tool-box"><h4>> Ping تست</h4><div class="input-group"><input type="text" id="ping-host" placeholder="Host" value="8.8.8.8"><button onclick="runTool('ping')">تست</button></div><div class="result-box" id="res-ping"></div></div>
+                
+                <div class="tool-box"><h4>> تست تزریق SQL</h4><div class="input-group"><input type="text" id="sqli-url" placeholder="URL" value="https://example.com?id=1"><button onclick="runTool('sqli')">تست</button></div><div class="result-box" id="res-sqli"></div></div>
+                <div class="tool-box"><h4>> تست XSS</h4><div class="input-group"><input type="text" id="xss-url" placeholder="URL" value="https://example.com?q="><button onclick="runTool('xss')">تست</button></div><div class="result-box" id="res-xss"></div></div>
+                <div class="tool-box"><h4>> تجزیه URL</h4><div class="input-group"><input type="text" id="parse-url" placeholder="URL" value="https://google.com/search?q=test"><button onclick="runTool('parse')">تجزیه</button></div><div class="result-box" id="res-parse"></div></div>
+                <div class="tool-box"><h4>> تولید مک آدرس</h4><div class="input-group"><button onclick="runTool('mac')" style="width:100%;">تولید MAC</button></div><div class="result-box" id="res-mac"></div></div>
+                <div class="tool-box"><h4>> مقایسه هش</h4><div class="input-group"><input type="text" id="hash1" placeholder="هش ۱" value="5f4dcc3b5aa765d61d8327deb882cf99"><input type="text" id="hash2" placeholder="هش ۲" value="5f4dcc3b5aa765d61d8327deb882cf99"><button onclick="runTool('hashcompare')">مقایسه</button></div><div class="result-box" id="res-hashcompare"></div></div>
+                <div class="tool-box"><h4>> تشخیص تکنولوژی سایت</h4><div class="input-group"><input type="text" id="tech-url" placeholder="URL" value="https://wordpress.org"><button onclick="runTool('tech')">تشخیص</button></div><div class="result-box" id="res-tech"></div></div>
+                <div class="tool-box"><h4>> رمزنگاری سزار</h4><div class="input-group"><input type="text" id="caesar-text" placeholder="متن" value="Hamed"><input type="number" id="caesar-shift" value="3" style="max-width:60px;"><button onclick="runTool('caesar')">رمزنگاری</button></div><div class="result-box" id="res-caesar"></div></div>
+                <div class="tool-box"><h4>> مبدل تاریخ یونیکس</h4><div class="input-group"><input type="number" id="unix-time" placeholder="Unix Time" value="1700000000"><button onclick="runTool('unixdate')">تبدیل</button></div><div class="result-box" id="res-unixdate"></div></div>
+                <div class="tool-box"><h4>> تست سرعت دامنه (Ping)</h4><div class="input-group"><input type="text" id="domain-ping" placeholder="Domain" value="github.com"><button onclick="runTool('domainping')">تست</button></div><div class="result-box" id="res-domainping"></div></div>
             </div>
         </div>
 
@@ -211,16 +223,24 @@ HTML_TEMPLATE = """
             else if(type === 'crawl') { body = {url: document.getElementById('crawl-url').value}; resId='res-crawl'; }
             else if(type === 'httpmethod') { body = {url: document.getElementById('method-url').value}; resId='res-httpmethod'; }
             else if(type === 'ping') { body = {host: document.getElementById('ping-host').value}; resId='res-ping'; }
+            else if(type === 'sqli') { body = {url: document.getElementById('sqli-url').value}; resId='res-sqli'; }
+            else if(type === 'xss') { body = {url: document.getElementById('xss-url').value}; resId='res-xss'; }
+            else if(type === 'parse') { body = {url: document.getElementById('parse-url').value}; resId='res-parse'; }
+            else if(type === 'mac') { resId='res-mac'; }
+            else if(type === 'hashcompare') { body = {h1: document.getElementById('hash1').value, h2: document.getElementById('hash2').value}; resId='res-hashcompare'; }
+            else if(type === 'tech') { body = {url: document.getElementById('tech-url').value}; resId='res-tech'; }
+            else if(type === 'caesar') { body = {text: document.getElementById('caesar-text').value, shift: document.getElementById('caesar-shift').value}; resId='res-caesar'; }
+            else if(type === 'unixdate') { body = {time: document.getElementById('unix-time').value}; resId='res-unixdate'; }
+            else if(type === 'domainping') { body = {host: document.getElementById('domain-ping').value}; resId='res-domainping'; }
 
             let el = document.getElementById(resId);
-            el.style.display = 'block';
-            el.innerText = "در حال پردازش...";
+            if(el) { el.style.display = 'block'; el.innerText = "در حال پردازش..."; }
 
             try {
                 let response = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
                 let data = await response.json();
-                el.innerText = data.result;
-            } catch(e) { el.innerText = "خطا در اجرای ابزار."; }
+                if(el) el.innerText = data.result;
+            } catch(e) { if(el) el.innerText = "خطا در اجرای ابزار."; }
         }
     </script>
 </body>
@@ -390,6 +410,87 @@ def api_ping():
         socket.create_connection((host, 80), timeout=3).close()
         return jsonify({"result": f"Connected successfully in {round((time.time() - start)*1000, 2)} ms"})
     except Exception as e: return jsonify({"result": f"Connection failed: {str(e)}"})
+
+# --- ابزارهای جدید ---
+@app.route('/api/sqli', methods=['POST'])
+def api_sqli():
+    url = request.json.get('url')
+    try:
+        payload = url + "'"
+        r1 = requests.get(url, timeout=5)
+        r2 = requests.get(payload, timeout=5)
+        if r1.text != r2.text:
+            return jsonify({"result": "Potential SQL Injection vulnerability detected!"})
+        return jsonify({"result": "No obvious SQLi found."})
+    except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
+
+@app.route('/api/xss', methods=['POST'])
+def api_xss():
+    url = request.json.get('url')
+    try:
+        payload = '<script>alert(1)</script>'
+        r = requests.get(url + payload, timeout=5)
+        if payload in r.text:
+            return jsonify({"result": "XSS vulnerability detected! (Reflected)"})
+        return jsonify({"result": "No obvious XSS found."})
+    except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
+
+@app.route('/api/parse', methods=['POST'])
+def api_parse():
+    url = request.json.get('url')
+    try:
+        parsed = urllib.parse.urlparse(url)
+        res = f"Scheme: {parsed.scheme}\\nNetloc: {parsed.netloc}\\nPath: {parsed.path}\\nQuery: {parsed.query}\\nFragment: {parsed.fragment}"
+        return jsonify({"result": res})
+    except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
+
+@app.route('/api/mac', methods=['POST'])
+def api_mac():
+    mac = ':'.join(['%02x' % random.randint(0, 255) for _ in range(6)])
+    return jsonify({"result": f"Random MAC: {mac}"})
+
+@app.route('/api/hashcompare', methods=['POST'])
+def api_hashcompare():
+    h1 = request.json.get('h1'); h2 = request.json.get('h2')
+    if h1 == h2: return jsonify({"result": "Hashes MATCH!"})
+    return jsonify({"result": "Hashes DO NOT match."})
+
+@app.route('/api/tech', methods=['POST'])
+def api_tech():
+    url = request.json.get('url')
+    try:
+        r = requests.get(url, timeout=5)
+        server = r.headers.get('Server', 'Unknown')
+        techs = []
+        if 'wp-content' in r.text: techs.append("WordPress")
+        if 'django' in r.text.lower(): techs.append("Django")
+        if 'react' in r.text.lower(): techs.append("React")
+        return jsonify({"result": f"Server: {server}\\nDetected: {', '.join(techs) if techs else 'None'}"})
+    except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
+
+@app.route('/api/caesar', methods=['POST'])
+def api_caesar():
+    text = request.json.get('text'); shift = int(request.json.get('shift', 3))
+    result = "".join(chr((ord(c) + shift - 65) % 26 + 65) if c.isupper() else chr((ord(c) + shift - 97) % 26 + 97) if c.islower() else c for c in text)
+    return jsonify({"result": result})
+
+@app.route('/api/unixdate', methods=['POST'])
+def api_unixdate():
+    try:
+        ts = int(request.json.get('time'))
+        dt = datetime.datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S UTC')
+        return jsonify({"result": dt})
+    except: return jsonify({"result": "Invalid Timestamp"})
+
+@app.route('/api/domainping', methods=['POST'])
+def api_domainping():
+    host = request.json.get('host')
+    try:
+        start = time.time()
+        ip = socket.gethostbyname(host)
+        end = time.time()
+        return jsonify({"result": f"Resolved to {ip} in {round((end - start)*1000, 2)} ms"})
+    except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.errorhandler(429)
 def ratelimit_handler(e): return "429 Too Many Requests", 429
