@@ -39,7 +39,7 @@ def add_security_headers(response):
     response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
     response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
     response.headers['Permissions-Policy'] = "camera=(), microphone=(), geolocation=(), payment=()"
-    response.headers['Server'] = 'Secure-Cyber-Gateway-3.0'
+    response.headers['Server'] = 'Secure-Cyber-Gateway-4.0'
     return response
 
 # 🛡️ لایه ۳: فایروال چندلایه (WAF + Honeypot + IP Ban)
@@ -117,57 +117,53 @@ HTML_TEMPLATE = """
     <style>
         :root {
             --bg-dark: #02050a; --neon-cyan: #00f3ff; --neon-purple: #b026ff; --neon-red: #ff003c;
-            --glass-bg: rgba(5, 12, 20, 0.85); --glass-border: rgba(0, 243, 255, 0.2);
+            --card-bg: #0a121e; --border-color: rgba(0, 243, 255, 0.2);
             --text-main: #e0e0e0; --text-muted: #8892b0;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { background-color: var(--bg-dark); background-image: linear-gradient(rgba(255, 0, 60, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 0, 60, 0.03) 1px, transparent 1px); background-size: 30px 30px; color: var(--text-main); font-family: 'Vazirmatn', sans-serif; min-height: 100vh; }
-        header { display: flex; justify-content: space-between; align-items: center; padding: 15px 25px; background: rgba(2, 5, 10, 0.95); border-bottom: 1px solid var(--glass-border); backdrop-filter: blur(10px); position: sticky; top: 0; z-index: 100; }
+        body { background-color: var(--bg-dark); color: var(--text-main); font-family: 'Vazirmatn', sans-serif; min-height: 100vh; }
+        header { display: flex; justify-content: space-between; align-items: center; padding: 15px 25px; background: #010306; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 100; }
         .logo-container { display: flex; align-items: center; gap: 12px; }
-        .logo-icon { width: 35px; height: 35px; border: 2px solid var(--neon-red); border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 0 15px var(--neon-red); }
+        .logo-icon { width: 35px; height: 35px; border: 2px solid var(--neon-red); border-radius: 50%; display: flex; justify-content: center; align-items: center; }
         .logo-icon::after { content: '☠'; font-size: 1.2rem; color: var(--neon-red); }
-        header h1 { font-size: 1.1rem; color: var(--neon-red); font-family: 'Share Tech Mono', monospace; letter-spacing: 2px; text-shadow: 0 0 10px var(--neon-red);}
+        header h1 { font-size: 1.1rem; color: var(--neon-red); font-family: 'Share Tech Mono', monospace; letter-spacing: 2px; }
+        
         .main-container { max-width: 1100px; margin: 0 auto; padding: 20px; }
-        .glass-card { background: var(--glass-bg); border: 1px solid var(--glass-border); border-radius: 12px; padding: 25px; margin-bottom: 25px; backdrop-filter: blur(10px); box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+        .glass-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 25px; margin-bottom: 25px; }
+        
         .hero-section { text-align: center; padding: 30px 20px; }
-        .hero-section h2 { font-size: 2.2rem; background: linear-gradient(90deg, var(--neon-red), var(--neon-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 10px; font-weight: 900; }
+        .hero-section h2 { font-size: 2.2rem; color: var(--neon-red); margin-bottom: 10px; font-weight: 900; }
         .hero-section p { color: var(--text-muted); line-height: 1.8; font-size: 0.95rem; }
-        .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; color: var(--neon-cyan); font-size: 1.3rem; border-bottom: 1px solid rgba(0,243,255,0.2); padding-bottom: 10px; }
+        .section-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; color: var(--neon-cyan); font-size: 1.3rem; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
         
         .work-list { display: flex; flex-direction: column; gap: 12px; }
-        .work-item { background: rgba(0,0,0,0.5); border-radius: 8px; padding: 15px; border-right: 3px solid var(--neon-purple); transition: 0.3s; }
-        .work-item:hover { background: rgba(176, 38, 255, 0.05); transform: translateX(-5px); }
+        .work-item { background: #000; border-radius: 8px; padding: 15px; border-right: 3px solid var(--neon-purple); }
         .work-item h5 { color: #fff; margin-bottom: 5px; font-size: 1.1rem; }
         .work-item p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
 
-        .ai-container { background: rgba(0, 0, 0, 0.8); border: 1px solid rgba(0, 243, 255, 0.3); border-radius: 15px; overflow: hidden; box-shadow: 0 0 30px rgba(0, 243, 255, 0.15); display: flex; flex-direction: column; height: 400px; }
-        .ai-header { background: linear-gradient(90deg, rgba(0, 243, 255, 0.1), rgba(176, 38, 255, 0.1)); padding: 15px 20px; border-bottom: 1px solid rgba(0, 243, 255, 0.2); display: flex; align-items: center; gap: 15px; }
-        .ai-avatar { width: 40px; height: 40px; background: radial-gradient(circle, var(--neon-cyan), var(--neon-purple)); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-cyan); animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { box-shadow: 0 0 15px var(--neon-cyan); } 50% { box-shadow: 0 0 30px var(--neon-purple); } 100% { box-shadow: 0 0 15px var(--neon-cyan); } }
+        .ai-container { background: #000; border: 1px solid var(--border-color); border-radius: 15px; display: flex; flex-direction: column; height: 350px; }
+        .ai-header { background: #080e17; padding: 15px 20px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 15px; }
+        .ai-avatar { width: 40px; height: 40px; background: var(--neon-cyan); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 1.2rem; }
         .ai-header h4 { color: #fff; font-size: 1.1rem; font-family: 'Share Tech Mono', monospace; }
         .ai-header p { color: var(--neon-cyan); font-size: 0.75rem; margin-top: 3px; }
-        .ai-chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; scroll-behavior: smooth; }
-        .chat-msg { padding: 12px 18px; border-radius: 15px; max-width: 85%; font-size: 0.95rem; line-height: 1.6; animation: fadeIn 0.3s ease; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .chat-msg.user { background: linear-gradient(135deg, var(--neon-purple), #7a00cc); color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
-        .chat-msg.bot { background: rgba(0, 243, 255, 0.05); color: var(--text-main); border: 1px solid rgba(0, 243, 255, 0.2); align-self: flex-start; border-bottom-left-radius: 2px; }
-        .chat-input-area { display: flex; padding: 15px; background: rgba(0, 0, 0, 0.5); border-top: 1px solid rgba(0, 243, 255, 0.1); gap: 10px; }
-        .chat-input-area input { flex: 1; padding: 12px 20px; background: #000; border: 1px solid var(--glass-border); color: #fff; border-radius: 25px; outline: none; font-family: inherit; }
-        .chat-input-area button { padding: 12px 25px; background: var(--neon-cyan); color: #000; border: none; border-radius: 25px; cursor: pointer; font-weight: bold; font-family: inherit; transition: 0.3s; }
-        .chat-input-area button:hover { box-shadow: 0 0 20px var(--neon-cyan); transform: scale(1.05); }
+        .ai-chat-box { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .chat-msg { padding: 12px 18px; border-radius: 15px; max-width: 85%; font-size: 0.95rem; line-height: 1.6; }
+        .chat-msg.user { background: var(--neon-purple); color: #fff; align-self: flex-end; border-bottom-right-radius: 2px; }
+        .chat-msg.bot { background: #111a26; color: var(--text-main); border: 1px solid var(--border-color); align-self: flex-start; border-bottom-left-radius: 2px; }
+        .chat-input-area { display: flex; padding: 15px; background: #050a10; border-top: 1px solid var(--border-color); gap: 10px; }
+        .chat-input-area input { flex: 1; padding: 12px 20px; background: #000; border: 1px solid var(--border-color); color: #fff; border-radius: 25px; outline: none; font-family: inherit; }
+        .chat-input-area button { padding: 12px 25px; background: var(--neon-cyan); color: #000; border: none; border-radius: 25px; cursor: pointer; font-weight: bold; font-family: inherit; }
         
         .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
-        .tool-box { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,0,60,0.2); border-radius: 8px; padding: 15px; transition: 0.3s; }
-        .tool-box:hover { border-color: var(--neon-cyan); box-shadow: 0 0 15px rgba(0, 243, 255, 0.2); }
+        .tool-box { background: #000; border: 1px solid #1a2332; border-radius: 8px; padding: 15px; }
         .tool-box h4 { color: var(--neon-red); margin-bottom: 15px; font-family: 'Share Tech Mono', monospace; font-size: 0.95rem;}
         .input-group { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
-        .input-group input { flex: 1; padding: 10px; background: #000; border: 1px solid var(--glass-border); color: #fff; border-radius: 5px; font-family: inherit; outline: none; font-size: 0.85rem;}
-        .input-group button { padding: 10px 15px; background: var(--neon-red); color: #fff; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-family: inherit; font-size: 0.85rem; transition: 0.3s;}
-        .input-group button:hover { background: #fff; color: #000; box-shadow: 0 0 15px var(--neon-red); }
-        .result-box { background: #000; padding: 10px; border-radius: 5px; font-family: inherit; color: var(--neon-cyan); min-height: 40px; font-size: 0.85rem; display: none; white-space: pre-wrap; direction: ltr; text-align: left; border-left: 2px solid var(--neon-red); }
+        .input-group input { flex: 1; padding: 10px; background: #050a10; border: 1px solid #1a2332; color: #fff; border-radius: 5px; font-family: inherit; outline: none; font-size: 0.85rem;}
+        .input-group button { padding: 10px 15px; background: var(--neon-red); color: #fff; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-family: inherit; font-size: 0.85rem;}
+        .result-box { background: #050a10; padding: 10px; border-radius: 5px; font-family: inherit; color: var(--neon-cyan); min-height: 40px; font-size: 0.85rem; display: none; white-space: pre-wrap; direction: ltr; text-align: left; border-left: 2px solid var(--neon-red); }
 
         .tg-box { text-align: center; }
-        .btn-tg { display: inline-block; background: var(--neon-cyan); color: #000; padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: bold; box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); margin-top: 15px; }
+        .btn-tg { display: inline-block; background: var(--neon-cyan); color: #000; padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: bold; margin-top: 15px; }
         .team-footer { text-align: center; font-family: 'Share Tech Mono', monospace; color: var(--text-muted); font-size: 0.8rem; padding: 30px 0; line-height: 2; border-top: 1px solid rgba(255,255,255,0.05); }
     </style>
 </head>
@@ -176,18 +172,18 @@ HTML_TEMPLATE = """
     <div class="main-container">
         <div class="glass-card hero-section">
             <h2>حامد (Hamed)</h2>
-            <p style="color: var(--neon-red); font-weight: bold; margin-bottom: 15px; text-shadow: 0 0 10px var(--neon-red);">هکر کلاه سیاه (Black Hat) ۱۷ ساله</p>
+            <p style="color: var(--neon-red); font-weight: bold; margin-bottom: 15px;">هکر کلاه سیاه (Black Hat) ۱۷ ساله</p>
             <p>بنیان‌گذار HamedCyberTeam — بدون محدودیت، بدون قانون.</p>
         </div>
 
-        <div class="glass-card" style="padding: 0; overflow: hidden; border: none; background: transparent; box-shadow: none;">
+        <div class="glass-card" style="padding: 0; border: none; background: transparent;">
             <div class="ai-container">
                 <div class="ai-header">
                     <div class="ai-avatar">🤖</div>
                     <div><h4>Hamed AI Assistant</h4><p>● آنلاین | نسخه سایبری</p></div>
                 </div>
                 <div class="ai-chat-box" id="chat-box">
-                    <div class="chat-msg bot">سیستم راه‌اندازی شد. سلام حامد! من دستیار هوشمند تو هستم. درباره هک، امنیت یا برنامه‌نویسی بپرس!</div>
+                    <div class="chat-msg bot">سیستم راه‌اندازی شد. سلام حامد! درباره هک، امنیت یا برنامه‌نویسی بپرس!</div>
                 </div>
                 <div class="chat-input-area">
                     <input type="text" id="chat-input" placeholder="پیام خود را وارد کنید..." onkeypress="if(event.key==='Enter') sendChat()">
