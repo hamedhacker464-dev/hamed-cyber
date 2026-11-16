@@ -11,14 +11,80 @@ import json
 import ssl
 import time
 import datetime
-import qrcode
-from io import BytesIO
-from flask import Flask, render_template_string, request, jsonify, send_file
+import ipaddress
+import logging
+from flask import Flask, render_template_string, request, jsonify, abort
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
-limiter = Limiter(get_remote_address, app=app, default_limits=["60 per minute"], storage_uri="memory://")
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - SECURITY_LOG - %(message)s')
+BLACKLISTED_IPS = {}
+BAN_TIME = 3600 
+
+limiter = Limiter(get_remote_address, app=app, default_limits=["60 per minute", "1000 per day"], storage_uri="memory://")
+
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Content-Security-Policy'] = "default-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; frame-ancestors 'none'; object-src 'none'; base-uri 'self';"
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains; preload'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy'] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers['Server'] = 'Secure-Web-Gateway-2.0'
+    return response
+
+@app.before_request
+def advanced_waf():
+    client_ip = get_remote_address()
+    now = time.time()
+
+    if client_ip in BLACKLISTED_IPS:
+        if now < BLACKLISTED_IPS[client_ip]:
+            abort(403) 
+        else:
+            del BLACKLISTED_IPS[client_ip]
+
+    bad_paths = ['/wp-admin', '/.env', '/config', '/phpmyadmin', '/.git', '/etc/passwd', '/../../']
+    if any(path in request.path.lower() for path in bad_paths):
+        logging.warning(f"Attack Blocked: Bad Path from {client_ip}")
+        abort(403)
+
+    try:
+        payload = request.get_data(as_text=True).lower()
+        attack_patterns = [
+            r"union\s+select", r"or\s+1\s*=\s*1", r"drop\s+table", r"information_schema",
+            r"<script", r"javascript:", r"onerror=", r"onload=", r"alert\(",
+            r";\s*cat\s+", r"\|\s*bash", r"&\s*whoami", r"\.\./", r"/etc/passwd",
+            r"sleep\(", r"benchmark\(", r"pg_sleep", r"waitfor\s+delay"
+        ]
+        for pattern in attack_patterns:
+            if re.search(pattern, payload):
+                logging.warning(f"WAF BLOCKED: Payload '{pattern}' from {client_ip}")
+                BLACKLISTED_IPS[client_ip] = now + BAN_TIME
+                abort(403)
+    except Exception:
+        pass
+
+def is_internal_ip(hostname):
+    try:
+        ip_str = socket.gethostbyname(hostname)
+        ip = ipaddress.ip_address(ip_str)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return True
+        return False
+    except Exception:
+        return True
+
+def validate_input(data, key, max_len=500):
+    if not isinstance(data, dict) or key not in data: return None
+    val = data[key]
+    if not isinstance(val, str) or len(val) > max_len: return None
+    clean_val = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', val)
+    return clean_val.strip()
 
 def ai_respond(text):
     text = text.lower()
@@ -62,16 +128,6 @@ HTML_TEMPLATE = """
         .work-item h5 { color: #fff; margin-bottom: 5px; font-size: 1.1rem; }
         .work-item p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
 
-        .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }
-        .tool-box { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,0,60,0.2); border-radius: 8px; padding: 15px; transition: 0.3s; }
-        .tool-box:hover { border-color: var(--neon-cyan); box-shadow: 0 0 15px rgba(0, 243, 255, 0.2); }
-        .tool-box h4 { color: var(--neon-red); margin-bottom: 15px; font-family: 'Share Tech Mono', monospace; font-size: 0.95rem;}
-        .input-group { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
-        .input-group input { flex: 1; padding: 10px; background: #000; border: 1px solid var(--glass-border); color: #fff; border-radius: 5px; font-family: inherit; outline: none; font-size: 0.85rem;}
-        .input-group button { padding: 10px 15px; background: var(--neon-red); color: #fff; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-family: inherit; font-size: 0.85rem; transition: 0.3s;}
-        .input-group button:hover { background: #fff; color: #000; box-shadow: 0 0 15px var(--neon-red); }
-        .result-box { background: #000; padding: 10px; border-radius: 5px; font-family: inherit; color: var(--neon-cyan); min-height: 40px; font-size: 0.85rem; display: none; white-space: pre-wrap; direction: ltr; text-align: left; border-left: 2px solid var(--neon-red); }
-        
         .ai-container { background: rgba(0, 0, 0, 0.8); border: 1px solid rgba(0, 243, 255, 0.3); border-radius: 15px; overflow: hidden; box-shadow: 0 0 30px rgba(0, 243, 255, 0.15); display: flex; flex-direction: column; height: 400px; }
         .ai-header { background: linear-gradient(90deg, rgba(0, 243, 255, 0.1), rgba(176, 38, 255, 0.1)); padding: 15px 20px; border-bottom: 1px solid rgba(0, 243, 255, 0.2); display: flex; align-items: center; gap: 15px; }
         .ai-avatar { width: 40px; height: 40px; background: radial-gradient(circle, var(--neon-cyan), var(--neon-purple)); border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 1.2rem; box-shadow: 0 0 15px var(--neon-cyan); animation: pulse 2s infinite; }
@@ -88,6 +144,16 @@ HTML_TEMPLATE = """
         .chat-input-area button { padding: 12px 25px; background: var(--neon-cyan); color: #000; border: none; border-radius: 25px; cursor: pointer; font-weight: bold; font-family: inherit; transition: 0.3s; }
         .chat-input-area button:hover { box-shadow: 0 0 20px var(--neon-cyan); transform: scale(1.05); }
         
+        .tools-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px; }
+        .tool-box { background: rgba(0,0,0,0.6); border: 1px solid rgba(255,0,60,0.2); border-radius: 8px; padding: 15px; transition: 0.3s; }
+        .tool-box:hover { border-color: var(--neon-cyan); box-shadow: 0 0 15px rgba(0, 243, 255, 0.2); }
+        .tool-box h4 { color: var(--neon-red); margin-bottom: 15px; font-family: 'Share Tech Mono', monospace; font-size: 0.95rem;}
+        .input-group { display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap; }
+        .input-group input { flex: 1; padding: 10px; background: #000; border: 1px solid var(--glass-border); color: #fff; border-radius: 5px; font-family: inherit; outline: none; font-size: 0.85rem;}
+        .input-group button { padding: 10px 15px; background: var(--neon-red); color: #fff; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; font-family: inherit; font-size: 0.85rem; transition: 0.3s;}
+        .input-group button:hover { background: #fff; color: #000; box-shadow: 0 0 15px var(--neon-red); }
+        .result-box { background: #000; padding: 10px; border-radius: 5px; font-family: inherit; color: var(--neon-cyan); min-height: 40px; font-size: 0.85rem; display: none; white-space: pre-wrap; direction: ltr; text-align: left; border-left: 2px solid var(--neon-red); }
+
         .tg-box { text-align: center; }
         .btn-tg { display: inline-block; background: var(--neon-cyan); color: #000; padding: 12px 30px; border-radius: 8px; text-decoration: none; font-weight: bold; box-shadow: 0 0 15px rgba(0, 243, 255, 0.4); margin-top: 15px; }
         .team-footer { text-align: center; font-family: 'Share Tech Mono', monospace; color: var(--text-muted); font-size: 0.8rem; padding: 30px 0; line-height: 2; border-top: 1px solid rgba(255,255,255,0.05); }
@@ -126,11 +192,6 @@ HTML_TEMPLATE = """
                 <div class="work-item"><h5>۳. کشف باگ Zero-Day در هسته لینوکس</h5><p>پیدا کردن آسیب‌پذیری روز صفر (RCE) و اخذ دسترسی کامل Root.</p></div>
                 <div class="work-item"><h5>۴. کرک هش‌های NTLM با خوشه GPU</h5><p>بازگردانی ۲ میلیون پسورد پیچیده با Rainbow Table.</p></div>
                 <div class="work-item"><h5>۵. نفوذ به سیستم‌های SCADA (کنترل صنعتی)</h5><p>دسترسی به پنل‌های PLC نیروگاه‌ها و زیرساخت‌های حساس.</p></div>
-                <div class="work-item"><h5>۶. بایپس سیستم احراز هویت بانکی (2FA)</h5><p>دور زدن لایه‌های امنیتی و نفوذ به حساب‌های سطح بالا.</p></div>
-                <div class="work-item"><h5>۷. رهگیری و شناسایی هکرهای کلاه‌سفید</h5><p>شناسایی ردپای ۵۰ مهاجم و ارسال گزارش به CERT.</p></div>
-                <div class="work-item"><h5>۸. نفوذ به شبکه‌های مخابراتی</h5><p>شنود و تحلیل ترافیک شبکه‌های 4G/5G در محیط ایزوله.</p></div>
-                <div class="work-item"><h5>۹. اکسپلویت مرورگر (Browser RCE)</h5><p>ساخت اکسپلویت برای V8 Engine و اجرای کد از راه دور.</p></div>
-                <div class="work-item"><h5>۱۰. هک فیزیکی و RFID Cloning</h5><p>کپی کردن کارت‌های RFID برای ورود به مناطق ممنوعه.</p></div>
             </div>
         </div>
 
@@ -157,7 +218,6 @@ HTML_TEMPLATE = """
                 <div class="tool-box"><h4>> لینک‌های صفحه (Crawler)</h4><div class="input-group"><input type="text" id="crawl-url" placeholder="URL" value="https://example.com"><button onclick="runTool('crawl')">استخراج لینک</button></div><div class="result-box" id="res-crawl"></div></div>
                 <div class="tool-box"><h4>> تشخیص HTTP Method</h4><div class="input-group"><input type="text" id="method-url" placeholder="URL" value="https://google.com"><button onclick="runTool('httpmethod')">تشخیص</button></div><div class="result-box" id="res-httpmethod"></div></div>
                 <div class="tool-box"><h4>> Ping تست</h4><div class="input-group"><input type="text" id="ping-host" placeholder="Host" value="8.8.8.8"><button onclick="runTool('ping')">تست</button></div><div class="result-box" id="res-ping"></div></div>
-                
                 <div class="tool-box"><h4>> تست تزریق SQL</h4><div class="input-group"><input type="text" id="sqli-url" placeholder="URL" value="https://example.com?id=1"><button onclick="runTool('sqli')">تست</button></div><div class="result-box" id="res-sqli"></div></div>
                 <div class="tool-box"><h4>> تست XSS</h4><div class="input-group"><input type="text" id="xss-url" placeholder="URL" value="https://example.com?q="><button onclick="runTool('xss')">تست</button></div><div class="result-box" id="res-xss"></div></div>
                 <div class="tool-box"><h4>> تجزیه URL</h4><div class="input-group"><input type="text" id="parse-url" placeholder="URL" value="https://google.com/search?q=test"><button onclick="runTool('parse')">تجزیه</button></div><div class="result-box" id="res-parse"></div></div>
@@ -184,62 +244,59 @@ HTML_TEMPLATE = """
             let text = input.value.trim();
             if(!text) return;
             let chatBox = document.getElementById('chat-box');
-            chatBox.innerHTML += `<div class="chat-msg user">${text}</div>`;
+            let userMsg = document.createElement('div'); userMsg.className = 'chat-msg user'; userMsg.textContent = text; chatBox.appendChild(userMsg);
             input.value = ''; chatBox.scrollTop = chatBox.scrollHeight;
             let typingId = 'typing-' + Date.now();
-            chatBox.innerHTML += `<div class="chat-msg bot" id="${typingId}">در حال پردازش...</div>`;
+            let typingMsg = document.createElement('div'); typingMsg.className = 'chat-msg bot'; typingMsg.id = typingId; typingMsg.textContent = "در حال پردازش..."; chatBox.appendChild(typingMsg);
             chatBox.scrollTop = chatBox.scrollHeight;
             try {
                 let response = await fetch('/api/ai', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text: text}) });
                 let data = await response.json();
                 document.getElementById(typingId).remove();
-                chatBox.innerHTML += `<div class="chat-msg bot">${data.reply}</div>`;
+                let botMsg = document.createElement('div'); botMsg.className = 'chat-msg bot'; botMsg.textContent = data.reply || data.error; chatBox.appendChild(botMsg);
                 chatBox.scrollTop = chatBox.scrollHeight;
-            } catch(e) { document.getElementById(typingId).innerText = "خطا در ارتباط."; }
+            } catch(e) { document.getElementById(typingId).textContent = "خطا در ارتباط."; }
         }
 
         async function runTool(type) {
-            let url = '/api/' + type;
-            let body = {};
-            let resId = 'res-' + type;
-            
-            if(type === 'scan') { body = {target: document.getElementById('scan-ip').value}; resId='res-scan'; }
-            else if(type === 'ipinfo') { body = {ip: document.getElementById('ip-info').value}; resId='res-ipinfo'; }
-            else if(type === 'hash') { body = {text: document.getElementById('hash-text').value}; resId='res-hash'; }
-            else if(type === 'subdomain') { body = {domain: document.getElementById('sub-domain').value}; resId='res-subdomain'; }
-            else if(type === 'genpass') { body = {len: document.getElementById('pass-len').value}; resId='res-genpass'; }
-            else if(type === 'urlcheck') { body = {url: document.getElementById('url-check').value}; resId='res-urlcheck'; }
-            else if(type === 'passcheck') { body = {pass: document.getElementById('pass-check').value}; resId='res-passcheck'; }
-            else if(type === 'urlencode' || type === 'urldecode') { body = {text: document.getElementById('url-encode').value}; resId='res-urlencode'; }
-            else if(type === 'tohex' || type === 'fromhex') { body = {text: document.getElementById('hex-text').value}; resId='res-hex'; }
-            else if(type === 'whois') { body = {domain: document.getElementById('whois-domain').value}; resId='res-whois'; }
-            else if(type === 'uuid') { resId='res-uuid'; }
-            else if(type === 'header') { body = {url: document.getElementById('http-headers').value}; resId='res-header'; }
-            else if(type === 'scrape') { body = {url: document.getElementById('scrape-url').value}; resId='res-scrape'; }
-            else if(type === 'tobin' || type === 'frombin') { body = {text: document.getElementById('bin-text').value}; resId='res-bin'; }
-            else if(type === 'formatjson') { body = {text: document.getElementById('json-text').value}; resId='res-json'; }
-            else if(type === 'sslcheck') { body = {host: document.getElementById('ssl-host').value}; resId='res-sslcheck'; }
-            else if(type === 'base64' || type === 'base64dec') { body = {text: document.getElementById('b64-text').value}; resId='res-base64'; }
-            else if(type === 'crawl') { body = {url: document.getElementById('crawl-url').value}; resId='res-crawl'; }
-            else if(type === 'httpmethod') { body = {url: document.getElementById('method-url').value}; resId='res-httpmethod'; }
-            else if(type === 'ping') { body = {host: document.getElementById('ping-host').value}; resId='res-ping'; }
-            else if(type === 'sqli') { body = {url: document.getElementById('sqli-url').value}; resId='res-sqli'; }
-            else if(type === 'xss') { body = {url: document.getElementById('xss-url').value}; resId='res-xss'; }
-            else if(type === 'parse') { body = {url: document.getElementById('parse-url').value}; resId='res-parse'; }
-            else if(type === 'mac') { resId='res-mac'; }
-            else if(type === 'hashcompare') { body = {h1: document.getElementById('hash1').value, h2: document.getElementById('hash2').value}; resId='res-hashcompare'; }
-            else if(type === 'tech') { body = {url: document.getElementById('tech-url').value}; resId='res-tech'; }
-            else if(type === 'caesar') { body = {text: document.getElementById('caesar-text').value, shift: document.getElementById('caesar-shift').value}; resId='res-caesar'; }
-            else if(type === 'unixdate') { body = {time: document.getElementById('unix-time').value}; resId='res-unixdate'; }
-            else if(type === 'domainping') { body = {host: document.getElementById('domain-ping').value}; resId='res-domainping'; }
+            let url = '/api/' + type; let body = {};
+            if(type === 'scan') { body = {target: document.getElementById('scan-ip').value}; }
+            else if(type === 'ipinfo') { body = {ip: document.getElementById('ip-info').value}; }
+            else if(type === 'hash') { body = {text: document.getElementById('hash-text').value}; }
+            else if(type === 'subdomain') { body = {domain: document.getElementById('sub-domain').value}; }
+            else if(type === 'genpass') { body = {len: document.getElementById('pass-len').value}; }
+            else if(type === 'urlcheck') { body = {url: document.getElementById('url-check').value}; }
+            else if(type === 'passcheck') { body = {pass: document.getElementById('pass-check').value}; }
+            else if(type === 'urlencode' || type === 'urldecode') { body = {text: document.getElementById('url-encode').value}; }
+            else if(type === 'tohex' || type === 'fromhex') { body = {text: document.getElementById('hex-text').value}; }
+            else if(type === 'whois') { body = {domain: document.getElementById('whois-domain').value}; }
+            else if(type === 'uuid') { }
+            else if(type === 'header') { body = {url: document.getElementById('http-headers').value}; }
+            else if(type === 'scrape') { body = {url: document.getElementById('scrape-url').value}; }
+            else if(type === 'tobin' || type === 'frombin') { body = {text: document.getElementById('bin-text').value}; }
+            else if(type === 'formatjson') { body = {text: document.getElementById('json-text').value}; }
+            else if(type === 'sslcheck') { body = {host: document.getElementById('ssl-host').value}; }
+            else if(type === 'base64' || type === 'base64dec') { body = {text: document.getElementById('b64-text').value}; }
+            else if(type === 'crawl') { body = {url: document.getElementById('crawl-url').value}; }
+            else if(type === 'httpmethod') { body = {url: document.getElementById('method-url').value}; }
+            else if(type === 'ping') { body = {host: document.getElementById('ping-host').value}; }
+            else if(type === 'sqli') { body = {url: document.getElementById('sqli-url').value}; }
+            else if(type === 'xss') { body = {url: document.getElementById('xss-url').value}; }
+            else if(type === 'parse') { body = {url: document.getElementById('parse-url').value}; }
+            else if(type === 'mac') { }
+            else if(type === 'hashcompare') { body = {h1: document.getElementById('hash1').value, h2: document.getElementById('hash2').value}; }
+            else if(type === 'tech') { body = {url: document.getElementById('tech-url').value}; }
+            else if(type === 'caesar') { body = {text: document.getElementById('caesar-text').value, shift: document.getElementById('caesar-shift').value}; }
+            else if(type === 'unixdate') { body = {time: document.getElementById('unix-time').value}; }
+            else if(type === 'domainping') { body = {host: document.getElementById('domain-ping').value}; }
 
-            let el = document.getElementById(resId);
+            let resId = 'res-' + type; let el = document.getElementById(resId);
             if(el) { el.style.display = 'block'; el.innerText = "در حال پردازش..."; }
 
             try {
                 let response = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body) });
                 let data = await response.json();
-                if(el) el.innerText = data.result;
+                if(el) el.innerText = data.result || data.error || "خطای ناشناخته";
             } catch(e) { if(el) el.innerText = "خطا در اجرای ابزار."; }
         }
     </script>
@@ -251,11 +308,22 @@ HTML_TEMPLATE = """
 def home(): return render_template_string(HTML_TEMPLATE)
 
 @app.route('/api/ai', methods=['POST'])
-def api_ai(): return jsonify({"reply": ai_respond(request.json.get('text', ''))})
+@limiter.limit("5 per minute")
+def api_ai(): 
+    try:
+        data = request.get_json()
+        text = validate_input(data, 'text', max_len=300)
+        if text is None: return jsonify({"error": "ورودی نامعتبر است."}), 400
+        return jsonify({"reply": ai_respond(text)})
+    except Exception: return jsonify({"error": "خطای پردازش."}), 400
 
 @app.route('/api/scan', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_scan():
-    target = request.json.get('target'); result = f"Target: {target}\\n"
+    data = request.get_json()
+    target = validate_input(data, 'target', max_len=100)
+    if not target or is_internal_ip(target): return jsonify({"error": "دسترسی مسدود است."}), 403
+    result = f"Target: {target}\\n"
     try:
         ip = socket.gethostbyname(target); result += f"IP: {ip}\\n\\n"
         for port in [21, 22, 23, 25, 53, 80, 110, 443, 445, 3306, 8080]:
@@ -266,8 +334,11 @@ def api_scan():
     return jsonify({"result": result})
 
 @app.route('/api/ipinfo', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_ipinfo():
-    ip = request.json.get('ip')
+    data = request.get_json()
+    ip = validate_input(data, 'ip', max_len=50)
+    if not ip or is_internal_ip(ip): return jsonify({"error": "دسترسی مسدود."}), 403
     try:
         data = requests.get(f"http://ip-api.com/json/{ip}?fields=status,country,city,isp,org,query", timeout=5).json()
         if data.get('status') == 'success': return jsonify({"result": f"IP: {data['query']}\\nCountry: {data['country']}\\nCity: {data['city']}\\nOrg: {data.get('org', data.get('isp'))}"})
@@ -276,33 +347,52 @@ def api_ipinfo():
 
 @app.route('/api/hash', methods=['POST'])
 def api_hash():
-    text = request.json.get('text').encode('utf-8')
-    return jsonify({"result": f"MD5: {hashlib.md5(text).hexdigest()}\\nSHA256: {hashlib.sha256(text).hexdigest()}"})
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    encoded = text.encode('utf-8')
+    return jsonify({"result": f"MD5: {hashlib.md5(encoded).hexdigest()}\\nSHA256: {hashlib.sha256(encoded).hexdigest()}"})
 
 @app.route('/api/subdomain', methods=['POST'])
 def api_subdomain():
-    domain = request.json.get('domain'); found = []
+    data = request.get_json()
+    domain = validate_input(data, 'domain', max_len=100)
+    if not domain or is_internal_ip(domain): return jsonify({"error": "دسترسی مسدود."}), 403
+    found = []
     for sub in ['www', 'mail', 'ftp', 'admin', 'blog', 'api', 'dev', 'test']:
-        try: socket.gethostbyname(f"{sub}.{domain}"); found.append(f"{sub}.{domain}")
+        try: 
+            host = f"{sub}.{domain}"
+            socket.gethostbyname(host)
+            found.append(host)
         except: pass
     if found: return jsonify({"result": "\\n".join(found)})
     return jsonify({"result": "None found."})
 
 @app.route('/api/genpass', methods=['POST'])
 def api_genpass():
-    length = int(request.json.get('len', 16))
+    data = request.get_json()
+    length = int(data.get('len', 16))
+    if length > 50: length = 50
     chars = string.ascii_letters + string.digits + "!@#$%^&*"
-    return jsonify({"result": ''.join(random.choice(chars) for _ in range(min(length, 50)))})
+    return jsonify({"result": ''.join(random.choice(chars) for _ in range(length))})
 
 @app.route('/api/urlcheck', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_urlcheck():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try: r = requests.head(url, timeout=5, allow_redirects=True); return jsonify({"result": f"Status: {r.status_code}\\nServer: {r.headers.get('Server', 'Unknown')}"})
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.route('/api/passcheck', methods=['POST'])
 def api_passcheck():
-    p = request.json.get('pass'); score = 0
+    data = request.get_json()
+    p = validate_input(data, 'pass', max_len=100)
+    if p is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    score = 0
     if len(p) >= 8: score += 1
     if re.search(r'[A-Z]', p): score += 1
     if re.search(r'[0-9]', p): score += 1
@@ -310,22 +400,39 @@ def api_passcheck():
     return jsonify({"result": f"Strength: {['Very Weak', 'Weak', 'Medium', 'Strong', 'Very Strong'][score]} ({score}/4)"})
 
 @app.route('/api/urlencode', methods=['POST'])
-def api_urlencode(): return jsonify({"result": urllib.parse.quote(request.json.get('text'))})
+def api_urlencode():
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    return jsonify({"result": urllib.parse.quote(text)})
 
 @app.route('/api/urldecode', methods=['POST'])
-def api_urldecode(): return jsonify({"result": urllib.parse.unquote(request.json.get('text'))})
+def api_urldecode():
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    return jsonify({"result": urllib.parse.unquote(text)})
 
 @app.route('/api/tohex', methods=['POST'])
-def api_tohex(): return jsonify({"result": request.json.get('text').encode().hex()})
+def api_tohex():
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    return jsonify({"result": text.encode().hex()})
 
 @app.route('/api/fromhex', methods=['POST'])
 def api_fromhex():
-    try: return jsonify({"result": bytes.fromhex(request.json.get('text')).decode()})
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=1000)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    try: return jsonify({"result": bytes.fromhex(text).decode()})
     except: return jsonify({"result": "Invalid Hex"})
 
 @app.route('/api/whois', methods=['POST'])
 def api_whois():
-    domain = request.json.get('domain')
+    data = request.get_json()
+    domain = validate_input(data, 'domain', max_len=100)
+    if not domain or is_internal_ip(domain): return jsonify({"error": "دسترسی مسدود."}), 403
     try:
         r = requests.get(f"https://rdap.org/domain/{domain}", timeout=5); data = r.json()
         reg_date = next((e['eventDate'] for e in data.get('events', []) if e['eventAction'] == 'registration'), 'Unknown')
@@ -336,14 +443,24 @@ def api_whois():
 def api_uuid(): return jsonify({"result": str(uuid.uuid4())})
 
 @app.route('/api/header', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_header():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try: r = requests.get(url, timeout=5); return jsonify({"result": "\\n".join(f"{k}: {v}" for k, v in r.headers.items())})
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.route('/api/scrape', methods=['POST'])
+@limiter.limit("5 per minute")
 def api_scrape():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try:
         r = requests.get(url, timeout=5, headers={'User-Agent': 'Mozilla/5.0'})
         title = re.search(r'<title>(.*?)</title>', r.text, re.IGNORECASE)
@@ -352,23 +469,36 @@ def api_scrape():
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.route('/api/tobin', methods=['POST'])
-def api_tobin(): return jsonify({"result": ' '.join(format(ord(i), '08b') for i in request.json.get('text'))})
+def api_tobin():
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    return jsonify({"result": ' '.join(format(ord(i), '08b') for i in text)})
 
 @app.route('/api/frombin', methods=['POST'])
 def api_frombin():
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=5000)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
     try:
-        binary = request.json.get('text').replace(' ', '')
+        binary = text.replace(' ', '')
         return jsonify({"result": ''.join(chr(int(binary[i:i+8], 2)) for i in range(0, len(binary), 8))})
     except: return jsonify({"result": "Invalid Binary"})
 
 @app.route('/api/formatjson', methods=['POST'])
 def api_formatjson():
-    try: return jsonify({"result": json.dumps(json.loads(request.json.get('text')), indent=4, ensure_ascii=False)})
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=5000)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    try: return jsonify({"result": json.dumps(json.loads(text), indent=4, ensure_ascii=False)})
     except: return jsonify({"result": "Invalid JSON"})
 
 @app.route('/api/sslcheck', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_sslcheck():
-    host = request.json.get('host')
+    data = request.get_json()
+    host = validate_input(data, 'host', max_len=100)
+    if not host or is_internal_ip(host): return jsonify({"error": "دسترسی مسدود."}), 403
     try:
         context = ssl.create_default_context()
         with socket.create_connection((host, 443), timeout=5) as sock:
@@ -378,16 +508,28 @@ def api_sslcheck():
     except Exception as e: return jsonify({"result": f"SSL Error: {str(e)}"})
 
 @app.route('/api/base64', methods=['POST'])
-def api_base64(): return jsonify({"result": base64.b64encode(request.json.get('text').encode()).decode()})
+def api_base64():
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    return jsonify({"result": base64.b64encode(text.encode()).decode()})
 
 @app.route('/api/base64dec', methods=['POST'])
 def api_base64dec():
-    try: return jsonify({"result": base64.b64decode(request.json.get('text').encode()).decode()})
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=1000)
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
+    try: return jsonify({"result": base64.b64decode(text.encode()).decode()})
     except: return jsonify({"result": "Invalid Base64"})
 
 @app.route('/api/crawl', methods=['POST'])
+@limiter.limit("5 per minute")
 def api_crawl():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try:
         r = requests.get(url, timeout=5)
         links = re.findall(r'href=[\'"]?([^\'" >]+)', r.text)
@@ -395,26 +537,38 @@ def api_crawl():
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.route('/api/httpmethod', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_httpmethod():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try:
         r = requests.options(url, timeout=5)
         return jsonify({"result": f"Allow: {r.headers.get('Allow', 'Not Specified')}"})
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.route('/api/ping', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_ping():
-    host = request.json.get('host')
+    data = request.get_json()
+    host = validate_input(data, 'host', max_len=100)
+    if not host or is_internal_ip(host): return jsonify({"error": "دسترسی مسدود."}), 403
     try:
         start = time.time()
         socket.create_connection((host, 80), timeout=3).close()
         return jsonify({"result": f"Connected successfully in {round((time.time() - start)*1000, 2)} ms"})
     except Exception as e: return jsonify({"result": f"Connection failed: {str(e)}"})
 
-# --- ابزارهای جدید ---
 @app.route('/api/sqli', methods=['POST'])
+@limiter.limit("5 per minute")
 def api_sqli():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try:
         payload = url + "'"
         r1 = requests.get(url, timeout=5)
@@ -425,8 +579,13 @@ def api_sqli():
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.route('/api/xss', methods=['POST'])
+@limiter.limit("5 per minute")
 def api_xss():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try:
         payload = '<script>alert(1)</script>'
         r = requests.get(url + payload, timeout=5)
@@ -437,7 +596,9 @@ def api_xss():
 
 @app.route('/api/parse', methods=['POST'])
 def api_parse():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=500)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
     try:
         parsed = urllib.parse.urlparse(url)
         res = f"Scheme: {parsed.scheme}\\nNetloc: {parsed.netloc}\\nPath: {parsed.path}\\nQuery: {parsed.query}\\nFragment: {parsed.fragment}"
@@ -451,13 +612,21 @@ def api_mac():
 
 @app.route('/api/hashcompare', methods=['POST'])
 def api_hashcompare():
-    h1 = request.json.get('h1'); h2 = request.json.get('h2')
+    data = request.get_json()
+    h1 = validate_input(data, 'h1', max_len=100)
+    h2 = validate_input(data, 'h2', max_len=100)
+    if not h1 or not h2: return jsonify({"error": "ورودی نامعتبر."}), 400
     if h1 == h2: return jsonify({"result": "Hashes MATCH!"})
     return jsonify({"result": "Hashes DO NOT match."})
 
 @app.route('/api/tech', methods=['POST'])
+@limiter.limit("5 per minute")
 def api_tech():
-    url = request.json.get('url')
+    data = request.get_json()
+    url = validate_input(data, 'url', max_len=200)
+    if not url: return jsonify({"error": "آدرس نامعتبر."}), 400
+    hostname = urllib.parse.urlparse(url).hostname
+    if not hostname or is_internal_ip(hostname): return jsonify({"error": "آدرس غیرمجاز."}), 403
     try:
         r = requests.get(url, timeout=5)
         server = r.headers.get('Server', 'Unknown')
@@ -470,21 +639,28 @@ def api_tech():
 
 @app.route('/api/caesar', methods=['POST'])
 def api_caesar():
-    text = request.json.get('text'); shift = int(request.json.get('shift', 3))
+    data = request.get_json()
+    text = validate_input(data, 'text', max_len=500)
+    shift = int(data.get('shift', 3))
+    if text is None: return jsonify({"error": "ورودی نامعتبر."}), 400
     result = "".join(chr((ord(c) + shift - 65) % 26 + 65) if c.isupper() else chr((ord(c) + shift - 97) % 26 + 97) if c.islower() else c for c in text)
     return jsonify({"result": result})
 
 @app.route('/api/unixdate', methods=['POST'])
 def api_unixdate():
+    data = request.get_json()
     try:
-        ts = int(request.json.get('time'))
+        ts = int(data.get('time'))
         dt = datetime.datetime.utcfromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S UTC')
         return jsonify({"result": dt})
     except: return jsonify({"result": "Invalid Timestamp"})
 
 @app.route('/api/domainping', methods=['POST'])
+@limiter.limit("10 per minute")
 def api_domainping():
-    host = request.json.get('host')
+    data = request.get_json()
+    host = validate_input(data, 'host', max_len=100)
+    if not host or is_internal_ip(host): return jsonify({"error": "دسترسی مسدود."}), 403
     try:
         start = time.time()
         ip = socket.gethostbyname(host)
@@ -493,7 +669,7 @@ def api_domainping():
     except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 @app.errorhandler(429)
-def ratelimit_handler(e): return "429 Too Many Requests", 429
+def ratelimit_handler(e): return jsonify({"error": "درخواست بیش از حد (ضد DDoS)."}), 429
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)
